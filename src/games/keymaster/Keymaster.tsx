@@ -16,6 +16,7 @@ interface KeymasterState {
 }
 
 const MEDALS = ["🥇", "🥈", "🥉"];
+const MAX_SETUP_KEYS = 24;
 
 export default function Keymaster({ socket, me, members, game }: GameProps) {
   const g = game as KeymasterState;
@@ -25,11 +26,12 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
   const sequence = g.sequence ?? [];
   const startedAt = g.startedAt ?? null;
   const results = g.results ?? [];
-  const players = g.players ?? {};
   const isHost = !!me && g.hostId === me.id;
 
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
+  const [flashDone, setFlashDone] = useState(false);
+  const [flashPhase, setFlashPhase] = useState(false);
   const [setupKeyCount, setSetupKeyCount] = useState(1);
   const [wrongFlash, setWrongFlash] = useState(false);
   const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
@@ -40,10 +42,29 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
     if (phase === "playing") {
       setProgress(0);
       setDone(false);
+      setFlashDone(false);
+      setFlashPhase(false);
       setWrongFlash(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, sequenceKey]);
+
+  // Flash the full key set blue 4 times on completion, then mark done
+  useEffect(() => {
+    if (!flashDone) return;
+    let count = 0;
+    const iv = setInterval(() => {
+      setFlashPhase((p) => !p);
+      count++;
+      if (count >= 8) {
+        clearInterval(iv);
+        setFlashDone(false);
+        setFlashPhase(false);
+        setDone(true);
+      }
+    }, 120);
+    return () => clearInterval(iv);
+  }, [flashDone]);
 
   // Countdown timer
   useEffect(() => {
@@ -61,9 +82,9 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
     return () => clearInterval(id);
   }, [phase, startedAt]);
 
-  // Use a ref to access current state inside the event listener without re-registering
-  const stateRef = useRef({ progress, done, countdownLeft, sequence, startedAt });
-  stateRef.current = { progress, done, countdownLeft, sequence, startedAt };
+  // Stable ref so the keydown handler always reads fresh state
+  const stateRef = useRef({ progress, done, flashDone, countdownLeft, sequence, startedAt });
+  stateRef.current = { progress, done, flashDone, countdownLeft, sequence, startedAt };
 
   // Keydown listener
   useEffect(() => {
@@ -77,8 +98,9 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
           .includes(e.key)
       ) return;
 
-      const { done: isDone, countdownLeft: left, sequence: seq, progress: prog } = stateRef.current;
-      if (isDone || (left !== null && left > 0)) return;
+      const { done: isDone, flashDone: isFlashDone, countdownLeft: left, sequence: seq, progress: prog } =
+        stateRef.current;
+      if (isDone || isFlashDone || (left !== null && left > 0)) return;
 
       e.preventDefault();
       const key = e.key.toUpperCase();
@@ -89,9 +111,10 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
         setProgress(newProgress);
         playSwap();
         if (newProgress === seq.length) {
-          setDone(true);
+          // Emit immediately so the server records an accurate time
           socket.emit("km:done", { typed: seq });
           playFanfare();
+          setFlashDone(true); // triggers 4-flash animation; setDone called after
         }
       } else {
         setProgress(0);
@@ -120,20 +143,24 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
             <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-violet-100/40">
               Starting key count
             </p>
-            <div className="mb-6 flex justify-center gap-2">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setSetupKeyCount(n)}
-                  className={`h-12 w-12 rounded-xl border text-lg font-bold transition ${
-                    setupKeyCount === n
-                      ? "border-sky-400 bg-sky-400/20 text-white"
-                      : "border-white/10 bg-white/5 text-violet-100/60 hover:bg-white/10"
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
+            <div className="mb-6 flex items-center justify-center gap-4">
+              <button
+                onClick={() => setSetupKeyCount((n) => Math.max(1, n - 1))}
+                disabled={setupKeyCount <= 1}
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-2xl font-bold transition hover:bg-white/20 disabled:opacity-30"
+              >
+                −
+              </button>
+              <span className="w-10 text-center text-3xl font-black tabular-nums">
+                {setupKeyCount}
+              </span>
+              <button
+                onClick={() => setSetupKeyCount((n) => Math.min(MAX_SETUP_KEYS, n + 1))}
+                disabled={setupKeyCount >= MAX_SETUP_KEYS}
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-2xl font-bold transition hover:bg-white/20 disabled:opacity-30"
+              >
+                +
+              </button>
             </div>
             <button
               onClick={() => socket.emit("km:start", { keyCount: setupKeyCount })}
@@ -185,7 +212,10 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
               key={m.id}
               className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-violet-100/40"
             >
-              <span>— {m.name}{m.id === me?.id && <span className="ml-1 text-xs">(you)</span>}</span>
+              <span>
+                — {m.name}
+                {m.id === me?.id && <span className="ml-1 text-xs">(you)</span>}
+              </span>
               <span className="font-mono">—</span>
             </li>
           ))}
@@ -195,7 +225,7 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
           <div className="flex flex-wrap justify-center gap-2 border-t border-white/10 pt-4">
             <button
               onClick={() => socket.emit("km:next", { increaseKeys: true })}
-              disabled={keyCount >= 8}
+              disabled={keyCount >= MAX_SETUP_KEYS}
               className="rounded-xl bg-gradient-to-br from-sky-500 to-violet-500 px-4 py-2 text-sm font-semibold shadow transition hover:scale-105 disabled:opacity-40 disabled:hover:scale-100"
             >
               Next Round (+1 key)
@@ -223,6 +253,14 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
   const finishedIds = new Set(results.map((r) => r.id));
   const myResult = results.find((r) => r.id === me?.id);
 
+  // Scale key boxes down for longer sequences so they fit without overflow
+  const boxClass =
+    sequence.length <= 8
+      ? "w-16 h-16 text-2xl"
+      : sequence.length <= 16
+        ? "w-12 h-12 text-xl"
+        : "w-10 h-10 text-base";
+
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_200px]">
       <div>
@@ -230,49 +268,58 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
           Round {round} · {keyCount} {keyCount !== 1 ? "keys" : "key"}
         </p>
 
-        {/* Key sequence */}
-        <div className="relative my-8 flex justify-center gap-3">
-          {sequence.map((key, i) => {
-            const isTyped = i < progress;
-            const isCurrent = i === progress;
-            const isFlashing = wrongFlash && isCurrent;
+        {/* During countdown: show only the number — keys are hidden to prevent guessing */}
+        {countingDown ? (
+          <div className="my-8 flex flex-col items-center justify-center py-8">
+            <span className="text-7xl font-black text-white">
+              {Math.ceil(countdownLeft! / 1000)}
+            </span>
+            <span className="mt-2 text-sm text-violet-100/60">Get ready…</span>
+          </div>
+        ) : (
+          <div className="my-8 flex flex-wrap justify-center gap-2">
+            {sequence.map((key, i) => {
+              const allDone = flashDone;
+              const isTyped = allDone || i < progress;
+              const isCurrent = !allDone && i === progress;
+              const isFlashingWrong = wrongFlash && isCurrent;
+              // Blue flash alternates between bright and dim
+              const flashBright = allDone && flashPhase;
+              const flashDim = allDone && !flashPhase;
 
-            return (
-              <div
-                key={i}
-                className={`flex h-16 w-16 items-center justify-center rounded-xl border-2 text-2xl font-black font-mono transition ${
-                  isFlashing
-                    ? "border-red-400 bg-red-400/20 text-red-300"
-                    : isTyped
-                      ? "border-sky-400 bg-sky-400/20 text-sky-300"
-                      : isCurrent
-                        ? "border-white bg-white/10 text-white shadow-[0_0_12px_rgba(255,255,255,0.3)]"
-                        : "border-white/20 bg-white/5 text-white/60"
-                }`}
-              >
-                {isTyped ? "✓" : key}
-              </div>
-            );
-          })}
+              return (
+                <div
+                  key={i}
+                  className={`flex ${boxClass} items-center justify-center rounded-xl border-2 font-black font-mono transition-colors duration-75 ${
+                    flashBright
+                      ? "border-sky-400 bg-sky-400/50 text-sky-100"
+                      : flashDim
+                        ? "border-sky-400/40 bg-sky-400/10 text-sky-300"
+                        : isFlashingWrong
+                          ? "border-red-400 bg-red-400/20 text-red-300"
+                          : isTyped
+                            ? "border-sky-400 bg-sky-400/20 text-sky-300"
+                            : isCurrent
+                              ? "border-white bg-white/10 text-white shadow-[0_0_12px_rgba(255,255,255,0.3)]"
+                              : "border-white/20 bg-white/5 text-white/60"
+                  }`}
+                >
+                  {isTyped ? "✓" : key}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-          {/* Countdown overlay */}
-          {countingDown && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-black/60 backdrop-blur-sm">
-              <span className="text-6xl font-black text-white">
-                {Math.ceil(countdownLeft! / 1000)}
-              </span>
-              <span className="mt-1 text-sm text-violet-100/60">Get ready…</span>
-            </div>
-          )}
-        </div>
-
-        {/* Status text */}
+        {/* Status */}
         <p className="text-center text-sm text-violet-100/60">
           {countingDown
             ? "Get ready…"
-            : done
-              ? `✅ Done! Waiting for others… ${myResult ? `Your time: ${myResult.ms} ms` : ""}`
-              : "Type the keys in order!"}
+            : flashDone
+              ? "✨ Nailed it!"
+              : done
+                ? `✅ Done! Waiting for others…${myResult ? ` Your time: ${myResult.ms} ms` : ""}`
+                : "Type the keys in order!"}
         </p>
       </div>
 
@@ -289,7 +336,9 @@ export default function Keymaster({ socket, me, members, game }: GameProps) {
             >
               <span className="truncate">
                 {MEDALS[idx] ?? "✅"} {r.name}
-                {r.id === me?.id && <span className="ml-1 text-xs text-sky-300/70">(you)</span>}
+                {r.id === me?.id && (
+                  <span className="ml-1 text-xs text-sky-300/70">(you)</span>
+                )}
               </span>
               <span className="shrink-0 font-mono text-xs text-violet-100/50">{r.ms} ms</span>
             </li>

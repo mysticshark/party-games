@@ -8,7 +8,7 @@ const KEY_POOL = [
 const COUNTDOWN_MS = 3000;
 const ROUND_TIMEOUT_MS = 30000;
 const MIN_KEYS = 1;
-const MAX_KEYS = 8;
+const MAX_KEYS = 24;
 
 function shuffle(arr) {
   const a = [...arr];
