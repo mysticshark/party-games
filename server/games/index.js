@@ -6,6 +6,7 @@ const disordered = require("./disordered");
 const beopardy = require("./beopardy");
 const twotruths = require("./twotruths");
 const punchline = require("./punchline");
+const keymaster = require("./keymaster");
 
 const GAMES = {
   [wheel.id]: wheel,
@@ -13,6 +14,7 @@ const GAMES = {
   [beopardy.id]: beopardy,
   [twotruths.id]: twotruths,
   [punchline.id]: punchline,
+  [keymaster.id]: keymaster,
 };
 
 function getGame(id) {

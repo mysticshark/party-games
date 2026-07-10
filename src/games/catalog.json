@@ -45,6 +45,15 @@
     "status": "live"
   },
   {
+    "id": "keymaster",
+    "name": "Keymaster",
+    "blurb": "Race to type the shown keys before anyone else. First to finish wins — measured in milliseconds.",
+    "emoji": "⌨️",
+    "accent": "#22d3ee",
+    "minPlayers": 2,
+    "status": "live"
+  },
+  {
     "id": "buzzword-bingo",
     "name": "Buzzword Bingo",
     "blurb": "Mark the buzzwords as they get dropped. First to a line wins.",
